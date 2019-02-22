@@ -18,69 +18,63 @@ data "azurerm_application_security_group" "asg" {
   resource_group_name  = "${data.azurerm_resource_group.env.name}"
 }
 
-resource "azurerm_network_interface" "fe_nic" {
-  name                = "${local.vmss}-fe_nic"
+resource "azurerm_lb" "azlb" {
+  name                = "${local.vmss}-lb"
   location            = "${data.azurerm_resource_group.env.location}"
   resource_group_name = "${data.azurerm_resource_group.env.name}"
-  tags                = "${data.azurerm_resource_group.env.tags}"
+  tags                = "${var.tags}"
 
-  enable_accelerated_networking = true
-
-  ip_configuration {
-    name                          = "ipConfiguration1"
+  frontend_ip_configuration {
+    name                          = "FrontEndIpConfig"
     subnet_id                     = "${data.azurerm_subnet.env.id}"
     private_ip_address_allocation = "Dynamic"
   }
 }
 
-/*
-
-resource "azurerm_lb" "test" {
-  name                = "test"
-  location            = "${azurerm_resource_group.test.location}"
-  resource_group_name = "${azurerm_resource_group.test.name}"
-
-  frontend_ip_configuration {
-    name                 = "PublicIPAddress"
-    public_ip_address_id = "${azurerm_public_ip.test.id}"
-  }
-}
-
-resource "azurerm_lb_backend_address_pool" "bpepool" {
-  resource_group_name = "${azurerm_resource_group.test.name}"
-  loadbalancer_id     = "${azurerm_lb.test.id}"
+resource "azurerm_lb_backend_address_pool" "azlb" {
+  resource_group_name = "${data.azurerm_resource_group.env.name}"
+  loadbalancer_id     = "${azurerm_lb.azlb.id}"
   name                = "BackEndAddressPool"
 }
 
-resource "azurerm_lb_nat_pool" "lbnatpool" {
-  count                          = 3
-  resource_group_name            = "${azurerm_resource_group.test.name}"
-  name                           = "ssh"
-  loadbalancer_id                = "${azurerm_lb.test.id}"
-  protocol                       = "Tcp"
-  frontend_port_start            = 50000
-  frontend_port_end              = 50119
-  backend_port                   = 22
-  frontend_ip_configuration_name = "PublicIPAddress"
+resource "azurerm_lb_probe" "azlb" {
+  resource_group_name = "${data.azurerm_resource_group.env.name}"
+  loadbalancer_id     = "${azurerm_lb.azlb.id}"
+  count               = "${length(var.lb_port)}"
+  name                = "${element(keys(var.lb_port), count.index)}"
+  protocol            = "${element(var.lb_port["${element(keys(var.lb_port), count.index)}"], 1)}"
+  port                = "${element(var.lb_port["${element(keys(var.lb_port), count.index)}"], 2)}"
 }
 
-resource "azurerm_lb_probe" "test" {
-  resource_group_name = "${azurerm_resource_group.test.name}"
-  loadbalancer_id     = "${azurerm_lb.test.id}"
-  name                = "http-probe"
-  request_path        = "/health"
-  port                = 8080
+resource "azurerm_lb_rule" "azlb" {
+  resource_group_name            = "${data.azurerm_resource_group.env.name}"
+  loadbalancer_id                = "${azurerm_lb.azlb.id}"
+  count                          = "${length(var.lb_port)}"
+  name                           = "${element(keys(var.lb_port), count.index)}"
+  frontend_ip_configuration_name = "FrontEndIpConfig"
+
+  protocol                       = "${element(var.lb_port["${element(keys(var.lb_port), count.index)}"], 1)}"
+  frontend_port                  = "${element(var.lb_port["${element(keys(var.lb_port), count.index)}"], 0)}"
+  backend_port                   = "${element(var.lb_port["${element(keys(var.lb_port), count.index)}"], 2)}"
+
+  probe_id                       = "${element(azurerm_lb_probe.azlb.*.id,count.index)}"
+
+  depends_on                     = ["azurerm_lb_probe.azlb"]
 }
 
-resource "azurerm_virtual_machine_scale_set" "test" {
-  name                = "mytestscaleset-1"
-  location            = "${azurerm_resource_group.test.location}"
-  resource_group_name = "${azurerm_resource_group.test.name}"
+resource "azurerm_virtual_machine_scale_set" "vmss" {
+  name                = "${local.vmss}"
+  location            = "${data.azurerm_resource_group.env.location}"
+  resource_group_name = "${data.azurerm_resource_group.env.name}"
+  tags                = "${var.tags}"
+
+  count               = "${var.vmcount}"
 
   # automatic rolling upgrade
-  automatic_os_upgrade = true
-  upgrade_policy_mode  = "Rolling"
+  automatic_os_upgrade = false
+  upgrade_policy_mode  = "Manual"
 
+/*
   rolling_upgrade_policy {
     max_batch_instance_percent              = 20
     max_unhealthy_instance_percent          = 20
@@ -89,12 +83,13 @@ resource "azurerm_virtual_machine_scale_set" "test" {
   }
 
   # required when using rolling upgrade policy
-  health_probe_id = "${azurerm_lb_probe.test.id}"
+  health_probe_id = "${element(azurerm_lb_probe.azlb.*.id, 0)}"
+  */
 
   sku {
-    name     = "Standard_F2"
+    name     = "${var.vmsize}"
+    capacity = "${var.vmcount}"
     tier     = "Standard"
-    capacity = 2
   }
 
   storage_profile_image_reference {
@@ -111,43 +106,99 @@ resource "azurerm_virtual_machine_scale_set" "test" {
     managed_disk_type = "Standard_LRS"
   }
 
-  storage_profile_data_disk {
-    lun           = 0
-    caching       = "ReadWrite"
-    create_option = "Empty"
-    disk_size_gb  = 10
-  }
-
   os_profile {
-    computer_name_prefix = "testvm"
-    admin_username       = "myadmin"
+    computer_name_prefix = "${var.prefix}"
+    admin_username       = "overlord"
   }
 
   os_profile_linux_config {
     disable_password_authentication = true
 
     ssh_keys {
-      path     = "/home/myadmin/.ssh/authorized_keys"
-      key_data = "${file("~/.ssh/demo_key.pub")}"
+      path     = "/home/overlord/.ssh/authorized_keys"
+      key_data = "${file("~/.ssh/id_rsa.pub")}"
     }
   }
 
   network_profile {
-    name    = "terraformnetworkprofile"
-    primary = true
+    name                    = "networkprofile"
+    primary                 = true
+    accelerated_networking  = "${var.accelerated}"
 
     ip_configuration {
-      name                                   = "TestIPConfiguration"
+      name                                   = "IpConfiguration"
       primary                                = true
-      subnet_id                              = "${azurerm_subnet.test.id}"
-      load_balancer_backend_address_pool_ids = ["${azurerm_lb_backend_address_pool.bpepool.id}"]
-      load_balancer_inbound_nat_rules_ids    = ["${element(azurerm_lb_nat_pool.lbnatpool.*.id, count.index)}"]
+      subnet_id                              = "${data.azurerm_subnet.env.id}"
+      load_balancer_backend_address_pool_ids = [ "${azurerm_lb_backend_address_pool.azlb.id}" ]
+      application_security_group_ids         = [ "${data.azurerm_application_security_group.asg.id}" ]
     }
-  }
-
-  tags {
-    environment = "staging"
   }
 }
 
-*/
+resource "azurerm_monitor_autoscale_setting" "vmss" {
+  name                = "${local.vmss}"
+  resource_group_name = "${data.azurerm_resource_group.env.name}"
+  location            = "${data.azurerm_resource_group.env.location}"
+
+  target_resource_id  = "${element(azurerm_virtual_machine_scale_set.vmss.*.id, 0)}"
+
+  profile {
+    name = "defaultProfile"
+
+    capacity {
+      default = "${var.vmcount}"
+      minimum = "${var.vmmin}"
+      maximum = "${var.vmmax}"
+    }
+
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = "${element(azurerm_virtual_machine_scale_set.vmss.*.id, 0)}"
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "GreaterThan"
+        threshold          = 75
+      }
+
+      scale_action {
+        direction = "Increase"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT1M"
+      }
+    }
+
+    rule {
+      metric_trigger {
+        metric_name        = "Percentage CPU"
+        metric_resource_id = "${element(azurerm_virtual_machine_scale_set.vmss.*.id, 0)}"
+        time_grain         = "PT1M"
+        statistic          = "Average"
+        time_window        = "PT5M"
+        time_aggregation   = "Average"
+        operator           = "LessThan"
+        threshold          = 25
+      }
+
+      scale_action {
+        direction = "Decrease"
+        type      = "ChangeCount"
+        value     = "1"
+        cooldown  = "PT1M"
+      }
+    }
+  }
+
+  notification {
+    email {
+      send_to_subscription_administrator    = true
+      send_to_subscription_co_administrator = true
+      custom_emails                         = "${var.emails}"
+    }
+  }
+
+  depends_on = [ "azurerm_virtual_machine_scale_set.vmss" ]
+}
