@@ -11,7 +11,8 @@ variable "environment_name" {
 }
 
 variable "prefix" {
-    type        = "myfirstvmss"
+    type        = "string"
+    default     = "myfirstvmss"
     description = "Prefix for the VMSS names."
 }
 
