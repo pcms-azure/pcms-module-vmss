@@ -1,15 +1,21 @@
+locals {
+    projenv  = "${var.project}-${var.environment_name}"
+    vmss     = "${var.project}-${var.environment_name}-${var.prefix}"
+}
+
 data "azurerm_resource_group" "env" {
-  name = "${var.resource_group}"
+  name = "${var.resource_group == "" ? local.projenv : var.resource_group}"
 }
 
 data "azurerm_subnet" "env" {
-  name                 = "${var.project}-${var.environment_name}"
-  virtual_network_name = "${var.project}-${var.environment_name}"
+  name                 = "${local.projenv}"
+  virtual_network_name = "${local.projenv}"
   resource_group_name  = "${data.azurerm_resource_group.env.name}"
 }
 
-locals {
-    vmss = "${var.project}-${var.environment_name}-${var.prefix}"
+data "azurerm_application_security_group" "asg" {
+  name                 = "${var.asg == "" ? local.vmss : var.asg}"
+  resource_group_name  = "${data.azurerm_resource_group.env.name}"
 }
 
 resource "azurerm_network_interface" "fe_nic" {
@@ -18,10 +24,11 @@ resource "azurerm_network_interface" "fe_nic" {
   resource_group_name = "${data.azurerm_resource_group.env.name}"
   tags                = "${data.azurerm_resource_group.env.tags}"
 
+  enable_accelerated_networking = true
+
   ip_configuration {
     name                          = "ipConfiguration1"
     subnet_id                     = "${data.azurerm_subnet.env.id}"
-    enable_accelerated_networking = true
     private_ip_address_allocation = "Dynamic"
   }
 }

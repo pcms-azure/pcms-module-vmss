@@ -18,13 +18,13 @@ variable "prefix" {
 
 variable "resource_group" {
     type        = "string"
-    default     = "${var.project}-${var.env}"
+    default     = ""
     description = "Name of the (pre-existing) resource group."
 }
 
 variable "asg" {
     type        = "string"
-    default     = "${var.project}-${var.env}-${var.prefix}"
+    default     = ""
     description = "Name of the (pre-existing) application security group."
 }
 
