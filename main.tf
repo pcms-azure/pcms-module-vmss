@@ -1,32 +1,41 @@
+provider "azurerm" {
+    version = "~> 1.22"
+}
+
 locals {
-    projenv  = "${var.project}-${var.environment_name}"
-    vmss     = "${var.project}-${var.environment_name}-${var.prefix}"
+    core    = "${var.project}-core"
+    projenv = "${var.project}-${var.environment_name}"
+    vmss    = "${var.project}-${var.environment_name}-${var.prefix}"
+    tags    = "${merge(data.azurerm_resource_group.env.tags, var.tags)}"
+
+    type    = "${var.image_id == "" ? "default" : "custom"}"
+
+    image   = {
+        "default" = [{
+            publisher = "Canonical"
+            offer     = "UbuntuServer"
+            sku       = "16.04-LTS"
+            version   = "latest"
+        }]
+        "custom" = [{
+            id        = "${var.image_id}"
+        }]
+    }
 }
 
 data "azurerm_resource_group" "env" {
-  name = "${var.resource_group == "" ? local.projenv : var.resource_group}"
-}
-
-data "azurerm_subnet" "env" {
-  name                 = "${local.projenv}"
-  virtual_network_name = "${local.projenv}"
-  resource_group_name  = "${data.azurerm_resource_group.env.name}"
-}
-
-data "azurerm_application_security_group" "asg" {
-  name                 = "${var.asg == "" ? local.vmss : var.asg}"
-  resource_group_name  = "${data.azurerm_resource_group.env.name}"
+  name = "${var.env_resource_group == "" ? local.projenv : var.env_resource_group}"
 }
 
 resource "azurerm_lb" "azlb" {
   name                = "${local.vmss}-lb"
   location            = "${data.azurerm_resource_group.env.location}"
   resource_group_name = "${data.azurerm_resource_group.env.name}"
-  tags                = "${var.tags}"
+  tags                = "${local.tags}"
 
   frontend_ip_configuration {
     name                          = "FrontEndIpConfig"
-    subnet_id                     = "${data.azurerm_subnet.env.id}"
+    subnet_id                     = "${var.subnet_id}"
     private_ip_address_allocation = "Dynamic"
   }
 }
@@ -62,11 +71,13 @@ resource "azurerm_lb_rule" "azlb" {
   depends_on                     = ["azurerm_lb_probe.azlb"]
 }
 
+
 resource "azurerm_virtual_machine_scale_set" "vmss" {
+
   name                = "${local.vmss}"
   location            = "${data.azurerm_resource_group.env.location}"
   resource_group_name = "${data.azurerm_resource_group.env.name}"
-  tags                = "${var.tags}"
+  tags                = "${local.tags}"
 
   count               = "${var.vmcount}"
 
@@ -74,30 +85,16 @@ resource "azurerm_virtual_machine_scale_set" "vmss" {
   automatic_os_upgrade = false
   upgrade_policy_mode  = "Manual"
 
-/*
-  rolling_upgrade_policy {
-    max_batch_instance_percent              = 20
-    max_unhealthy_instance_percent          = 20
-    max_unhealthy_upgraded_instance_percent = 5
-    pause_time_between_batches              = "PT0S"
-  }
-
-  # required when using rolling upgrade policy
-  health_probe_id = "${element(azurerm_lb_probe.azlb.*.id, 0)}"
-  */
-
   sku {
     name     = "${var.vmsize}"
     capacity = "${var.vmcount}"
     tier     = "Standard"
   }
 
-  storage_profile_image_reference {
-    publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "16.04-LTS"
-    version   = "latest"
-  }
+  //Dynamically determine image block using the locals.  Needs to be a list for some unknown reason.
+  // https://github.com/hashicorp/terraform/issues/13103. Should be fixed in Terraform 0.12.
+
+  storage_profile_image_reference = [ "${local.image[local.type]}" ]
 
   storage_profile_os_disk {
     name              = ""
@@ -128,9 +125,9 @@ resource "azurerm_virtual_machine_scale_set" "vmss" {
     ip_configuration {
       name                                   = "IpConfiguration"
       primary                                = true
-      subnet_id                              = "${data.azurerm_subnet.env.id}"
+      subnet_id                              = "${var.subnet_id}"
       load_balancer_backend_address_pool_ids = [ "${azurerm_lb_backend_address_pool.azlb.id}" ]
-      application_security_group_ids         = [ "${data.azurerm_application_security_group.asg.id}" ]
+      application_security_group_ids         = [ "${var.asg_id}" ]
     }
   }
 }

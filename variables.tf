@@ -1,6 +1,6 @@
 variable "project" {
     type        = "string"
-    default     = "pcms-microsoft-non-prod"
+    default     = "pcms-contoso-non-prod"
     description = "PCMS project identifier, e.g. pcms-<customername>-non-prod*"
 }
 
@@ -16,24 +16,45 @@ variable "prefix" {
     description = "Prefix for the VMSS names."
 }
 
-variable "vmsize" {
+variable "env_resource_group" {
     type        = "string"
-    default     = "Standard_D4s_v3"
+    default     = ""
+    description = "Name of the (pre-existing) resource group."
+}
+
+variable "subnet_id" {
+    type        = "string"
+    description = "Resource ID of the subnet."
+}
+
+variable "asg_id" {
+    type        = "string"
+    description = "ID of the application security group."
+}
+
+variable "vmsize" {
+    description = "VM size, from `az vm list-sizes --location westeurope --output table`"
+    type        = "string"
+    // default     = "Standard_D4s_v3"
+    default     = "Standard_B1s"
 }
 
 variable "accelerated" {
-   default      =   true
    description  = "Accelerated networking for Linux.  Set to false for VM sizes that do not support."
+   default      =  false
+   // default      =  true
 }
 
 variable "vmcount" {
     type        = "string"
     default     = 2
 }
+
 variable "vmmin" {
     type        = "string"
     default     = 2
 }
+
 variable "vmmax" {
     type        = "string"
     default     = 10
@@ -47,28 +68,16 @@ variable "lb_port" {
                   }
 }
 
-variable "resource_group" {
+variable "image_id" {
     type        = "string"
     default     = ""
-    description = "Name of the (pre-existing) resource group."
-}
-
-variable "asg" {
-    type        = "string"
-    default     = ""
-    description = "Name of the (pre-existing) application security group."
-}
-
-variable "loc" {
-    type        = "string"
-    default     = "westeurope"
-    description = "Azure region shortname."
+    description = "Resource ID of packer build image, usually from data.azurerm_image. Will default to platform image of Ubuntu 16.04 if unspecified."
 }
 
 variable "tags" {
     type        = "map"
     default     = {}
-    description = "Map of tag name:value pairs."
+    description = "Map of tag name:value pairs. Will default using local to that of the resource group."
 }
 
 variable "emails" {
